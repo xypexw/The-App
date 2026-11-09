@@ -1,0 +1,116 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.6'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+
+group = 'com.example'
+version = '0.0.1-SNAPSHOT'
+description = 'PeacockXTR'
+
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+
+repositories {
+    mavenCentral()
+}
+
+
+// Các version tùy chỉnh được lên đây để dễ quản lý và nâng cấp sau này
+ext {
+    set('jjwtVersion', '0.11.5')
+    set('jacksonVersion', '2.15.2')
+}
+
+
+dependencies {
+    // -----------------------------------------------------------
+    // 1. SPRING BOOT CORE & WEB
+    // -----------------------------------------------------------
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'io.micrometer:micrometer-registry-prometheus'
+
+
+    // -----------------------------------------------------------
+    // 2. SECURITY & JWT
+    // -----------------------------------------------------------
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation "io.jsonwebtoken:jjwt-api:${jjwtVersion}"
+    implementation 'org.springframework.boot:spring-boot-starter-amqp'
+    implementation 'org.springframework.boot:spring-boot-starter-amqp'
+    testImplementation 'org.springframework.amqp:spring-rabbit-test'
+    testImplementation 'org.springframework.amqp:spring-rabbit-test'
+    runtimeOnly "io.jsonwebtoken:jjwt-impl:${jjwtVersion}"
+    runtimeOnly "io.jsonwebtoken:jjwt-jackson:${jjwtVersion}"
+    implementation 'org.springframework.security:spring-security-crypto'
+    implementation 'org.bouncycastle:bcprov-jdk18on:1.81'
+
+
+    // -----------------------------------------------------------
+    // 3. DATABASE & CACHE
+    // -----------------------------------------------------------
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jdbc'
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    runtimeOnly 'com.mysql:mysql-connector-j'
+    implementation 'org.apache.commons:commons-pool2' // Cho Redis connection pool
+
+
+    // -----------------------------------------------------------
+    // 4. JSON & SERIALIZATION
+    // -----------------------------------------------------------
+    implementation "com.fasterxml.jackson.module:jackson-module-blackbird:${jacksonVersion}"
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-hibernate6'
+
+
+    // -----------------------------------------------------------
+    // 5. LOMBOK & UTILITIES
+    // -----------------------------------------------------------
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+
+    implementation 'io.minio:minio:8.6.0'
+    implementation 'com.github.f4b6a3:uuid-creator:5.3.2'
+
+
+    // -----------------------------------------------------------
+    // 6. API DOCUMENTATION (OpenAPI / Scalar)
+    // -----------------------------------------------------------
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.16'
+
+
+    // -----------------------------------------------------------
+    // 7. TESTING
+    // -----------------------------------------------------------
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+
+
+
+
+
+}
+
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
