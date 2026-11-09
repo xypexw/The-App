@@ -1,0 +1,14 @@
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+
+apisix:
+  dns_resolver:
+    - 127.0.0.11
+
+nginx_config:
+  error_log_level: "error"
+  http:
+    access_log: "logs/access.log"
+    error_log: "logs/error.log"

@@ -1,0 +1,228 @@
+version: '3.8'
+
+networks:
+  peacock_network:
+    driver: bridge
+
+volumes:
+  minio_data:
+  rabbitmq_data:
+  mysql_data:
+  peacock_logs:
+
+services:
+  # MySQL Database Server
+  mysql:
+    image: mysql:8.4
+    container_name: mysql_server
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: Long190105
+      MYSQL_DATABASE: peacockDb
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - peacock_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pLong190105"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Spring Boot Application
+  peacock-app:
+    build:
+      context: ../../PeacockXTR
+      dockerfile: Dockerfile
+    container_name: peacock_xtr_app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    networks:
+      - peacock_network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=peacockDb
+      - DB_USER=root
+      - DB_PASSWORD=Long190105
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=admin
+      - RABBITMQ_PASS=password123
+    volumes:
+      - peacock_logs:/var/log/peacock
+
+  # Backend For Frontend (BFF) Application
+  peacock-bff:
+    build:
+      context: ../../Xcelerator
+      dockerfile: Dockerfile
+    container_name: peacock_bff_app
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    networks:
+      - peacock_network
+    depends_on:
+      peacock-app:
+        condition: service_started
+      redis:
+        condition: service_started
+    environment:
+      - XTR_BASE_URL=http://peacock-app:8080
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  # Redis & Exporter
+  redis:
+    image: redis:alpine
+    container_name: redis_server
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - peacock_network
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    container_name: redis-exporter
+    restart: always
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+    networks:
+      - peacock_network
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+
+  # Silo Server (Drop-in replacement for MinIO)
+  minio:
+    image: pgsty/silo:latest
+    container_name: minio_server
+    restart: always
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - peacock_network
+    environment:
+      MINIO_ROOT_USER: "admin"
+      MINIO_ROOT_PASSWORD: "password123"
+      MINIO_NOTIFY_WEBHOOK_ENABLE_backend_api: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_backend_api: "http://peacock-app:8080/api/minio/webhook"
+      MINIO_NOTIFY_WEBHOOK_COMMENT_backend_api: "Allow offline startup"
+      MINIO_NOTIFY_WEBHOOK_QUEUE_LIMIT_backend_api: "1000"
+      MINIO_NOTIFY_WEBHOOK_QUEUE_DIR_backend_api: "/tmp/events"
+    command: server /data --console-address ":9001"
+
+  # Silo / MinIO Client Init
+  minio-init:
+    image: pgsty/mc:latest
+    container_name: minio_init
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_started
+    networks:
+      - peacock_network
+    entrypoint: >
+      /bin/sh -c "
+        set -e;
+        echo '[init] Waiting for Silo (MinIO fork)...';
+        until mc alias set myminio http://minio:9000 admin password123 >/dev/null 2>&1; do
+          sleep 2;
+        done;
+        echo '[init] Creating buckets...';
+        mc mb myminio/peacock-bucket-public --ignore-existing;
+        mc mb myminio/peacock-bucket-private --ignore-existing;
+        mc anonymous set download myminio/peacock-bucket-public;
+        echo '[init] Configuring webhook notification...';
+        mc event add myminio/peacock-bucket-public arn:minio:sqs::backend_api:webhook --event put --ignore-existing;
+        echo '[init] Setup completed successfully!';
+      "
+
+  # APISIX Gateway
+  apisix:
+    image: apache/apisix:3.9.0-debian
+    container_name: apisix
+    restart: always
+    ports:
+      - "9080:9080"
+      - "9180:9180"
+    networks:
+      - peacock_network
+    volumes:
+      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml
+      - ./apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq_server
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: "admin"
+      RABBITMQ_DEFAULT_PASS: "password123"
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - peacock_network
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflare_tunnel
+    restart: always
+    command: tunnel --url http://apisix:9080
+    networks:
+      - peacock_network
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.10.4
+    container_name: filebeat
+    user: root
+    command: ["filebeat", "-e", "-strict.perms=false"]
+    restart: unless-stopped
+    environment:
+      - MONITORING_HOST=${PROMETHEUS_HOST}
+    volumes:
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - peacock_logs:/var/log/peacock:ro
+    networks:
+      - peacock_network
+    depends_on:
+      - peacock-app

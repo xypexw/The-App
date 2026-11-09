@@ -1,0 +1,163 @@
+routes:
+  # ROUTE 1: PUBLIC ENDPOINTS (Straight to Spring Boot, No Plugins)
+  - id: "public-auth-route"
+    name: "Public-Auth-Endpoints"
+    uris:
+      - "/api/auth/login"
+      - "/api/auth/refresh"
+      - "/api/minio/webhook"
+    priority: 10
+    upstream_id: "spring-boot-upstream"
+
+  # ROUTE 2: WEBSOCKET TRAFFIC (Bypass Lua Auth + Enable WebSocket + Sticky Session)
+  - id: "websocket-route"
+    name: "WebSocket-Endpoints"
+    uris:
+      - "/ws"
+      - "/ws/*"
+    priority: 8
+    enable_websocket: true
+    upstream_id: "spring-boot-ws-upstream"
+
+  # ROUTE 3: BFF PROTECTED TRAFFIC (Auth + Rate Limit + Forward to BFF)
+  - id: "bff-protected-route"
+    name: "BFF-Protected-Endpoints"
+    uri: "/bff/*"
+    priority: 5
+    upstream_id: "bff-upstream"
+    plugins:
+      # PLUGIN 1: CUSTOM AUTHENTICATION (Chỉ check Access Token)
+      serverless-pre-function:
+        phase: "rewrite"
+        functions:
+          - |
+            return function(conf, ctx)
+                local core = require("apisix.core")
+                local redis = require("resty.redis")
+
+                local auth_header = core.request.header(ctx, "Authorization")
+                if not auth_header then return 401, {error = "Missing Auth Header"} end
+
+                local _, _, token = string.find(auth_header, "Bearer%s+(.+)")
+                if not token then return 401, {error = "Invalid Bearer Format"} end
+
+                local jwt_regex = [[^eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_=]+$]]
+                if not ngx.re.match(token, jwt_regex, "jo") then
+                    return 400, {error = "Malformed JWT Token"}
+                end
+
+                local red = redis:new()
+                red:set_timeouts(1000, 1000, 1000)
+
+                local redis_ip, err = core.resolver.parse_domain("redis")
+                if not redis_ip then return 500, {error = "Internal Gateway Error: Redis DNS"} end
+
+                local ok, conn_err = red:connect(redis_ip, 6379)
+                if not ok then return 500, {error = "Internal Gateway Error: Redis Conn"} end
+
+                local redis_key = "peacockxt:session:token:" .. token
+                local user_id, r_err = red:get(redis_key)
+                red:set_keepalive(10000, 100)
+
+                if not user_id or user_id == ngx.null then
+                    return 401, {error = "Invalid or Expired Session Token"}
+                end
+
+                core.request.set_header(ctx, "Authorization", nil)
+                core.request.set_header(ctx, "X-User-Id", tostring(user_id))
+                core.request.set_header(ctx, "Custom-User-Id", tostring(user_id))
+            end
+
+      # PLUGIN 2: RATE LIMIT BY USER ID
+      limit-count:
+        count: 60
+        time_window: 60
+        rejected_code: 429
+        rejected_msg: "Too Many Requests - Please slow down!"
+        key_type: "var"
+        key: "http_custom_user_id"
+        policy: "redis"
+        redis_host: "redis"
+        redis_port: 6379
+        redis_timeout: 1000
+
+  # ROUTE 4: PROTECTED APP TRAFFIC (Auth + Rate Limit by User ID)
+  - id: "protected-app-route"
+    name: "Protected-Endpoints"
+    uri: "/*"
+    priority: 0
+    upstream_id: "spring-boot-upstream"
+    plugins:
+      # PLUGIN 1: CUSTOM AUTHENTICATION
+      serverless-pre-function:
+        phase: "rewrite"
+        functions:
+          - |
+            return function(conf, ctx)
+                local core = require("apisix.core")
+                local redis = require("resty.redis")
+
+                local auth_header = core.request.header(ctx, "Authorization")
+                if not auth_header then return 401, {error = "Missing Auth Header"} end
+
+                local _, _, token = string.find(auth_header, "Bearer%s+(.+)")
+                if not token then return 401, {error = "Invalid Bearer Format"} end
+
+                local jwt_regex = [[^eyJ[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_=]+$]]
+                if not ngx.re.match(token, jwt_regex, "jo") then
+                    return 400, {error = "Malformed JWT Token"}
+                end
+
+                local red = redis:new()
+                red:set_timeouts(1000, 1000, 1000)
+
+                local redis_ip, err = core.resolver.parse_domain("redis")
+                if not redis_ip then return 500, {error = "Cannot resolve redis hostname"} end
+
+                local ok, err = red:connect(redis_ip, 6379)
+                if not ok then return 500, {error = "Redis Connection Error"} end
+
+                local session_key = "peacockxt:session:token:" .. token
+                local user_id, err = red:get(session_key)
+                red:set_keepalive(10000, 100)
+
+                if not user_id or user_id == ngx.null then
+                    return 401, {error = "Session Expired"}
+                end
+
+                core.request.set_header(ctx, "Authorization", nil)
+                core.request.set_header(ctx, "X-User-Id", tostring(user_id))
+                core.request.set_header(ctx, "Custom-User-Id", tostring(user_id))
+            end
+
+      # PLUGIN 2: RATE LIMIT BY USER ID
+      limit-count:
+        count: 60
+        time_window: 60
+        rejected_code: 429
+        rejected_msg: "Too Many Requests - Please slow down!"
+        key_type: "var"
+        key: "http_custom_user_id"
+        policy: "redis"
+        redis_host: "redis"
+        redis_port: 6379
+        redis_timeout: 1000
+
+upstreams:
+  - id: "spring-boot-upstream"
+    nodes:
+      "peacock-app:8080": 1
+    type: roundrobin
+
+  - id: "spring-boot-ws-upstream"
+    nodes:
+      "peacock-app:8080": 1
+    type: chash
+    hash_on: "vars"
+    key: "remote_addr"
+
+  - id: "bff-upstream"
+    nodes:
+      "peacock-bff:8081": 1
+    type: roundrobin
+#END
