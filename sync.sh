@@ -57,9 +57,9 @@ git subtree pull --prefix=Sparkle remote-sparkle main --squash -m "chore: sync S
 echo "--> Syncing Midnight..."
 git subtree pull --prefix=Midnight remote-midnight main --squash -m "chore: sync Midnight" || handle_conflict "Midnight"
 
-# 4. Xcellerator
-echo "--> Syncing Xcellerator..."
-git subtree pull --prefix=Xcellerator remote-xcellerator main --squash -m "chore: sync Xcellerator" || handle_conflict "Xcellerator"
+# 4. Xcelerator
+echo "--> Syncing Xcelerator..."
+git subtree pull --prefix=Xcelerator remote-Xcelerator main --squash -m "chore: sync Xcelerator" || handle_conflict "Xcelerator"
 
 echo "=== Pushing to origin main ==="
 git push origin main
