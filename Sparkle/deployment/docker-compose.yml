@@ -23,15 +23,15 @@ services:
       - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+      - ./seeds/mysql:/docker-entrypoint-initdb.d:ro
     networks:
       - peacock_network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pLong190105"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pLong190105" ]
       interval: 5s
       timeout: 5s
       retries: 10
-
-  # Spring Boot Application
+  # Spring Boot Application (PeacockXTR)
   peacock-app:
     build:
       context: ../../PeacockXTR
@@ -70,7 +70,7 @@ services:
     volumes:
       - peacock_logs:/var/log/peacock
 
-  # Backend For Frontend (BFF) Application
+  # Backend For Frontend (Xcelerator Go BFF)
   peacock-bff:
     build:
       context: ../../Xcelerator
@@ -144,6 +144,8 @@ services:
     depends_on:
       minio:
         condition: service_started
+    volumes:
+      - ./seeds/public_bucket:/seeds/public_bucket:ro
     networks:
       - peacock_network
     entrypoint: >
@@ -157,6 +159,8 @@ services:
         mc mb myminio/peacock-bucket-public --ignore-existing;
         mc mb myminio/peacock-bucket-private --ignore-existing;
         mc anonymous set download myminio/peacock-bucket-public;
+        echo '[init] Seeding initial public assets...';
+        mc mirror /seeds/public_bucket myminio/peacock-bucket-public;
         echo '[init] Configuring webhook notification...';
         mc event add myminio/peacock-bucket-public arn:minio:sqs::backend_api:webhook --event put --ignore-existing;
         echo '[init] Setup completed successfully!';
@@ -193,7 +197,7 @@ services:
       RABBITMQ_DEFAULT_USER: "admin"
       RABBITMQ_DEFAULT_PASS: "password123"
     healthcheck:
-      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
