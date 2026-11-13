@@ -9,7 +9,7 @@ routes:
     priority: 10
     upstream_id: "spring-boot-upstream"
 
-  # ROUTE 2: WEBSOCKET TRAFFIC (Bypass Lua Auth + Enable WebSocket + Sticky Session)
+  # ROUTE 2: WEBSOCKET TRAFFIC (Bypass Lua Auth + Enable WebSocket + Sticky)
   - id: "websocket-route"
     name: "WebSocket-Endpoints"
     uris:
@@ -19,14 +19,13 @@ routes:
     enable_websocket: true
     upstream_id: "spring-boot-ws-upstream"
 
-  # ROUTE 3: BFF PROTECTED TRAFFIC (Auth + Rate Limit + Forward to BFF)
+  # ROUTE 3: BFF PROTECTED TRAFFIC (/bff/* -> Auth + Rate Limit -> Xcelerator)
   - id: "bff-protected-route"
     name: "BFF-Protected-Endpoints"
     uri: "/bff/*"
     priority: 5
     upstream_id: "bff-upstream"
     plugins:
-      # PLUGIN 1: CUSTOM AUTHENTICATION (Chỉ check Access Token)
       serverless-pre-function:
         phase: "rewrite"
         functions:
@@ -68,7 +67,6 @@ routes:
                 core.request.set_header(ctx, "Custom-User-Id", tostring(user_id))
             end
 
-      # PLUGIN 2: RATE LIMIT BY USER ID
       limit-count:
         count: 60
         time_window: 60
@@ -81,14 +79,18 @@ routes:
         redis_port: 6379
         redis_timeout: 1000
 
-  # ROUTE 4: PROTECTED APP TRAFFIC (Auth + Rate Limit by User ID)
+  # ROUTE 4: DIRECT PROTECTED API (/api/* -> Auth + Rate Limit -> Spring Boot)
   - id: "protected-app-route"
-    name: "Protected-Endpoints"
-    uri: "/*"
+    name: "Protected-Direct-API-Endpoints"
+    uri: "/api/*"
+    # To restrict access ONLY to the 2 Storage Controllers via Route 4:
+    # Delete the `uri: "/api/*"` line above and uncomment the 3 lines below:
+    # uris:
+    #   - "/api/v1/private-storage/*"
+    #   - "/api/v1/public-storage/*"
     priority: 0
     upstream_id: "spring-boot-upstream"
     plugins:
-      # PLUGIN 1: CUSTOM AUTHENTICATION
       serverless-pre-function:
         phase: "rewrite"
         functions:
@@ -130,7 +132,6 @@ routes:
                 core.request.set_header(ctx, "Custom-User-Id", tostring(user_id))
             end
 
-      # PLUGIN 2: RATE LIMIT BY USER ID
       limit-count:
         count: 60
         time_window: 60
